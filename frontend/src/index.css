@@ -484,3 +484,103 @@ button {
   background: #f0f2f4;
 }
 
+/* Dashboard text hierarchy */
+.trade-app .brand strong,
+.trade-app .welcome h1,
+.trade-app .panel-title h2,
+.trade-app .metric-copy strong,
+.trade-app .ticker strong,
+.trade-app .equity-stats b,
+.trade-app .summary-item strong {
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.trade-app .table-row,
+.trade-app .news-list li,
+.trade-app .profile strong {
+  color: #e8eef6;
+}
+
+.trade-app .ticker small,
+.trade-app .metric-copy > span,
+.trade-app .table-head,
+.trade-app .equity-stats span,
+.trade-app .summary-item span,
+.trade-app .news-list time,
+.trade-app .topbar time {
+  color: #9aabc0;
+}
+
+.trade-app .status-pill,
+.trade-app .signal-pill {
+  font-weight: 700;
+}
+
+.light-mode .brand strong,
+.light-mode .welcome h1,
+.light-mode .panel-title h2,
+.light-mode .metric-copy strong,
+.light-mode .ticker strong,
+.light-mode .equity-stats b,
+.light-mode .summary-item strong {
+  color: #111827;
+  font-weight: 700;
+}
+
+.light-mode .table-row,
+.light-mode .news-list li,
+.light-mode .profile strong {
+  color: #1f2937;
+}
+
+.light-mode .ticker small,
+.light-mode .metric-copy > span,
+.light-mode .table-head,
+.light-mode .equity-stats span,
+.light-mode .summary-item span,
+.light-mode .news-list time,
+.light-mode .topbar time {
+  color: #52677d;
+}
+
+@media (min-width: 901px) {
+  .topbar {
+    height: 62px;
+    padding: 0 22px;
+    gap: 18px;
+  }
+
+  .search-box {
+    width: min(340px, 38vw);
+    height: 38px;
+    padding: 0 12px;
+  }
+
+  .search-box input {
+    font-size: 12px;
+  }
+
+  .market-status,
+  .topbar time,
+  .profile strong {
+    font-size: 11px;
+  }
+
+  .icon-button {
+    padding: 8px;
+  }
+
+  .profile span {
+    width: 30px;
+    height: 30px;
+    font-size: 11px;
+  }
+}
+
+@media (max-width: 900px) and (min-width: 621px) {
+  .topbar {
+    height: 56px;
+  }
+}
+
