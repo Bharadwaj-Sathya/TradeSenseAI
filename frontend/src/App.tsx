@@ -1,12 +1,16 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
+import TradeLayout from './components/TradeLayout'
 import HomePage from './pages/HomePage'
-
-
+import StrategiesPage from './pages/StrategiesPage'
 
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route element={<TradeLayout />}>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/dashboard" element={<HomePage />} />
+        <Route path="/strategies" element={<StrategiesPage />} />
+      </Route>
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   )

@@ -10,7 +10,7 @@ from app.utils.Base import Base
 
 # Import models so Alembic can discover them.
 from app.features.models.candle import Candle
-
+from app.features.models.strategy import Strategy
 
 # ---------------------------------------------------------
 # Alembic Config

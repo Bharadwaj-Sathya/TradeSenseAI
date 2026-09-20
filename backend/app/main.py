@@ -16,6 +16,10 @@ from app.config.configuration import settings
 from app.config.database import engine
 from app.core.logging import get_logger, setup_logging
 
+# Routes
+from app.features.routes.strategy import router as strategy_router
+
+
 # -------------------------------------------------
 # Load environment variables
 # -------------------------------------------------
@@ -188,6 +192,7 @@ def health_check():
 
 
 app.include_router(api_router, prefix="/api/v1")
+app.include_router(strategy_router, prefix="/api/v1") 
 
 
 
