@@ -24,11 +24,6 @@ class PipeFormatter(logging.Formatter):
         message = record.getMessage()
 
         metadata: list[str] = []
-        metadata.append(f"app={os.getenv('APP_NAME', 'TradeSenseAI')}")
-        metadata.append(f"env={os.getenv('ENVIRONMENT', os.getenv('ENV', 'development'))}")
-        metadata.append(f"version={os.getenv('APP_VERSION', '1.0.0')}")
-        metadata.append(f"pid={os.getpid()}")
-        metadata.append(f"host={os.getenv('HOSTNAME', 'localhost')}")
 
         for key, value in record.__dict__.items():
             if key in {
@@ -54,11 +49,20 @@ class PipeFormatter(logging.Formatter):
                 "stack_info",
                 "thread",
                 "threadName",
+                "taskName",
             }:
                 continue
             if key.startswith("_"):
                 continue
-            metadata.append(f"{key}={value}")
+            if key in {"app", "env", "version", "pid", "host"}:
+                metadata.append(f"{key}={value}")
+
+        if record.exc_info:
+            message = f"{message} | EXCEPTION | {self.formatException(record.exc_info)}"
+
+        if metadata:
+            return f"{timestamp} | {level} | {logger_name} | {' '.join(metadata)} | {message}"
+        return f"{timestamp} | {level} | {logger_name} | {message}"
 
         if record.exc_info:
             message = f"{message} | EXCEPTION | {self.formatException(record.exc_info)}"
