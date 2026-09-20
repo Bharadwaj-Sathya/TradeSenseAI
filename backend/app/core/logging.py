@@ -1,10 +1,10 @@
-import json
 import logging
 import os
 import sys
+from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Final
+from typing import Final
 
 
 DEFAULT_LOG_DIR: Final[Path] = Path("logs")
@@ -12,22 +12,23 @@ MAX_LOG_BYTES: Final[int] = 5 * 1024 * 1024
 BACKUP_COUNT: Final[int] = 5
 
 
-class JsonFormatter(logging.Formatter):
-    """Emit structured JSON logs suitable for log aggregation systems."""
+class PipeFormatter(logging.Formatter):
+    """Emit compact single-line logs with operational metadata."""
 
     def format(self, record: logging.LogRecord) -> str:
-        payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, datefmt="%Y-%m-%dT%H:%M:%S%z"),
-            "level": record.levelname,
-            "logger": record.name,
-            "message": record.getMessage(),
-            "module": record.module,
-            "function": record.funcName,
-            "line": record.lineno,
-        }
+        timestamp = datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S")
+        milliseconds = int(record.msecs)
+        timestamp = f"{timestamp},{milliseconds:03d}"
+        level = record.levelname
+        logger_name = record.name
+        message = record.getMessage()
 
-        if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+        metadata: list[str] = []
+        metadata.append(f"app={os.getenv('APP_NAME', 'TradeSenseAI')}")
+        metadata.append(f"env={os.getenv('ENVIRONMENT', os.getenv('ENV', 'development'))}")
+        metadata.append(f"version={os.getenv('APP_VERSION', '1.0.0')}")
+        metadata.append(f"pid={os.getpid()}")
+        metadata.append(f"host={os.getenv('HOSTNAME', 'localhost')}")
 
         for key, value in record.__dict__.items():
             if key in {
@@ -55,9 +56,14 @@ class JsonFormatter(logging.Formatter):
                 "threadName",
             }:
                 continue
-            payload[key] = value
+            if key.startswith("_"):
+                continue
+            metadata.append(f"{key}={value}")
 
-        return json.dumps(payload, ensure_ascii=True, default=str)
+        if record.exc_info:
+            message = f"{message} | EXCEPTION | {self.formatException(record.exc_info)}"
+
+        return f"{timestamp} | {level} | {logger_name} | {' '.join(metadata)} | {message}"
 
 
 def setup_logging(
@@ -75,7 +81,7 @@ def setup_logging(
         root_logger.removeHandler(handler)
         handler.close()
 
-    formatter = JsonFormatter()
+    formatter = PipeFormatter()
 
     if log_dir is None:
         log_dir = os.getenv("LOG_DIR", DEFAULT_LOG_DIR)

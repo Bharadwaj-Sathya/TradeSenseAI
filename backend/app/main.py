@@ -10,8 +10,11 @@ from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
-from app.core.logging import get_logger      
+from app.config.configuration import settings
+from app.config.database import engine
+from app.core.logging import get_logger, setup_logging
 
 # -------------------------------------------------
 # Load environment variables
@@ -25,7 +28,7 @@ APP_VERSION = os.getenv("APP_VERSION")
 # -------------------------------------------------
 # Logging
 # -------------------------------------------------
-
+setup_logging(level=logging.INFO, use_console=True)
 logger = get_logger(__name__)
 
 # -------------------------------------------------
@@ -34,10 +37,25 @@ logger = get_logger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting database engine")
+    logger.info("Application startup begin")
+
+    database_url = (settings.database_url or "").strip()
+    if not database_url:
+        logger.warning("DATABASE_URL is not configured; skipping DB connectivity check")
+    else:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text("SELECT 1"))
+            logger.info("Database connection verified")
+        except Exception:
+            logger.exception("Database connection failed during startup")
+            raise
+
     yield
-    logger.info("Shutting down database engine")
-    # await engine.dispose()
+
+    logger.info("Application shutdown begin")
+    await engine.dispose()
+    logger.info("Database engine disposed")
 
 
 # -------------------------------------------------
@@ -161,7 +179,7 @@ app.mount("/media", StaticFiles(directory="media"), name="media")
 # -------------------------------------------------
 # API Routers
 # -------------------------------------------------
-api_router = APIRouter(prefix="/api", tags=["API"])
+api_router = APIRouter(tags=["API"])
 
 
 @api_router.get("/health")
