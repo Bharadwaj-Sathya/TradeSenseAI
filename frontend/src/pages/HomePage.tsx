@@ -255,13 +255,23 @@ function Summary({
 
 export default function HomePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [dark, setDark] = useState(true);
+  const [dark, setDark] = useState(() => {
+    if (typeof window === "undefined") return true;
+    const savedTheme = window.localStorage.getItem("tradesense-theme");
+    return savedTheme ? savedTheme === "dark" : true;
+  });
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
     const clock = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(clock);
   }, []);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("tradesense-theme", dark ? "dark" : "light");
+    }
+  }, [dark]);
 
   const currentHour = now.getHours();
   const timeOfDay =
