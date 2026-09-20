@@ -29,7 +29,12 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { useState, type ComponentType, type ReactNode } from "react";
+import {
+  useEffect,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import afternoonBackground from "../assets/afternoon-bg.png";
 import eveningBackground from "../assets/evening-bg.png";
 import logo from "../assets/logo.png";
@@ -90,6 +95,15 @@ const signals = [
   ["09:28", "ICICIBANK", "BUY", "VWAP", "₹1,186.75"],
 ];
 
+function livePrice(price: string, index: number, seconds: number) {
+  const base = Number(price.replace(/,/g, ""));
+  const movement = ((seconds + index * 7) % 9 - 4) * (index === 3 ? 0.01 : 0.4);
+  return (base + movement).toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 function Sparkline({ down = false }: { down?: boolean }) {
   return (
     <svg
@@ -131,6 +145,8 @@ function MetricCard({
   note,
   chart,
   tone = "green",
+  ringProgress,
+  ringColor = "#38d4b2",
 }: {
   icon: ComponentType<{ size?: number }>;
   label: string;
@@ -139,20 +155,51 @@ function MetricCard({
   note?: string;
   chart?: boolean;
   tone?: string;
+  ringProgress?: number;
+  ringColor?: string;
 }) {
+  const hasRing = typeof ringProgress === "number";
+  const radius = 32;
+  const circumference = 2 * Math.PI * radius;
+  const dashOffset = hasRing
+    ? circumference - (ringProgress / 100) * circumference
+    : circumference;
+
   return (
-    <article className="metric-card">
+    <article className={`metric-card ${hasRing ? "metric-card-with-ring" : ""}`}>
       <div className={`metric-icon ${tone}`}>
         <Icon size={17} />
       </div>
       <div className="metric-copy">
         <span>{label}</span>
-        <strong>{value}</strong>
+        {!hasRing && <strong>{value}</strong>}
         <div className="metric-change">
           {change} {note && <small>{note}</small>}
         </div>
       </div>
-      {chart && <Sparkline />}
+      {hasRing ? (
+        <div className="metric-ring" aria-label={`${label}: ${value}`}>
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <circle className="metric-ring-bg" cx="50" cy="50" r={radius} />
+            <circle
+              className="metric-ring-progress"
+              cx="50"
+              cy="50"
+              r={radius}
+              style={{
+                stroke: ringColor,
+                strokeDasharray: circumference,
+                strokeDashoffset: dashOffset,
+              }}
+            />
+          </svg>
+          <div className="metric-ring-inner">
+            <span>{value}</span>
+          </div>
+        </div>
+      ) : (
+        chart && <Sparkline />
+      )}
     </article>
   );
 }
@@ -209,7 +256,13 @@ function Summary({
 export default function HomePage() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [dark, setDark] = useState(true);
-  const now = new Date();
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const clock = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(clock);
+  }, []);
+
   const currentHour = now.getHours();
   const timeOfDay =
     currentHour >= 5 && currentHour < 12
@@ -283,11 +336,18 @@ export default function HomePage() {
           <div className="ai-icon">
             <Bot size={21} />
           </div>
-          <strong>AI Working for You</strong>
-          <span>Analyzing 1,250+ instruments</span>
+          <strong>TradeSense AI</strong>
           <b>
             <i /> Engine Online
           </b>
+          <div className="ai-scan">
+            <span>Scanning</span>
+            <strong>1,250 instruments</strong>
+          </div>
+          <div className="ai-detections">
+            <div><strong>18</strong><span>signals detected</span></div>
+            <div><strong>4</strong><span>high-confidence setups</span></div>
+          </div>
           <p>“Discipline is the real edge.”</p>
         </div>
       </aside>
@@ -333,12 +393,12 @@ export default function HomePage() {
           </div>
         </header>
         <div className="ticker-row">
-          {tickers.map(([name, price, change, direction]) => (
-            <div className="ticker" key={name}>
+          {tickers.map(([name, price, change, direction], index) => (
+            <div className="ticker live-ticker" key={name}>
               <div>
                 <small>{name}</small>
                 <strong>
-                  {price}{" "}
+                  {livePrice(price, index, now.getSeconds())}{" "}
                   <em className={direction === "down" ? "negative" : ""}>
                     {change}
                   </em>
@@ -350,7 +410,7 @@ export default function HomePage() {
         </div>
         <div className="dashboard-content">
           <section
-            className={`welcome time-welcome ${welcomeBackground ? `${timeOfDay}-welcome` : ""}`}
+            className={`welcome time-welcome ${timeOfDay}-welcome`}
             style={
               welcomeBackground
                 ? {
@@ -396,6 +456,8 @@ export default function HomePage() {
               value="68.4%"
               change="17 / 25 trades"
               tone="blue"
+              ringProgress={68.4}
+              ringColor="#4ddbb5"
             />
             <MetricCard
               icon={LayersIcon}
