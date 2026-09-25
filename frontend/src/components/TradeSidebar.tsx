@@ -138,5 +138,5 @@ export default function TradeSidebar({ isOpen = false, onClose }: TradeSidebarPr
 
 export function useSidebarToggle() {
   const [open, setOpen] = useState(false);
-  return { open, open: open, setOpen, toggle: () => setOpen((v) => !v) };
+  return { open, setOpen, toggle: () => setOpen((v) => !v) };
 }

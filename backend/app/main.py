@@ -18,6 +18,7 @@ from app.core.logging import get_logger, setup_logging
 
 # Routes
 from app.features.routes.strategy import router as strategy_router
+from app.features.routes.settings import router as settings_router
 
 
 # -------------------------------------------------
@@ -193,6 +194,7 @@ def health_check():
 
 app.include_router(api_router, prefix="/api/v1")
 app.include_router(strategy_router, prefix="/api/v1") 
+app.include_router(settings_router, prefix="/api/v1")
 
 
 
