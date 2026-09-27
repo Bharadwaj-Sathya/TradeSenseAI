@@ -27,9 +27,12 @@ class BreezeClient:
         retry_delay_seconds: float = 0.5,
         request_timeout_seconds: float = 15.0,
     ) -> None:
-        self.api_key = (settings.breeze_api_key if api_key is None else api_key).strip()
-        self.api_secret = (settings.breeze_api_secret if api_secret is None else api_secret).strip()
-        self.session_token = (settings.breeze_session_token if session_token is None else session_token).strip()
+        self.api_key = (
+            settings.breeze_api_key if api_key is None else api_key).strip()
+        self.api_secret = (
+            settings.breeze_api_secret if api_secret is None else api_secret).strip()
+        self.session_token = (
+            settings.breeze_session_token if session_token is None else session_token).strip()
         self.max_retries = max_retries
         self.retry_delay_seconds = retry_delay_seconds
         self.request_timeout_seconds = request_timeout_seconds
@@ -171,7 +174,7 @@ class BreezeClient:
     # Historical data
     # ------------------------------------------------------------------
 
-    def get_historical_data(
+    def get_historical_data_v2(
         self,
         stock_code: str,
         exchange_code: str,
@@ -183,16 +186,18 @@ class BreezeClient:
         right: str = "",
         strike_price: str = "",
     ) -> dict[str, Any]:
-        """Fetch historical OHLC data from Breeze."""
-
         self._ensure_connected()
 
         try:
             response = self._retry_request(
-                lambda: self._client.get_historical_data(
+                lambda: self._client.get_historical_data_v2(
                     interval=interval,
-                    from_date=from_date.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-                    to_date=to_date.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                    from_date=from_date.strftime(
+                        "%Y-%m-%dT%H:%M:%S.000Z"
+                    ),
+                    to_date=to_date.strftime(
+                        "%Y-%m-%dT%H:%M:%S.000Z"
+                    ),
                     stock_code=stock_code,
                     exchange_code=exchange_code,
                     product_type=product_type,
@@ -200,21 +205,24 @@ class BreezeClient:
                     right=right,
                     strike_price=strike_price,
                 ),
-                f"historical:{stock_code}",
+                f"historical_v2:{stock_code}",
             )
 
             self._check_response(response)
+
             return response
 
         except MarketDataException:
             raise
-        except Exception as exc:
-            logger.exception("Historical data request failed | %s", stock_code)
-            raise MarketDataException(
-                message=f"Failed to fetch historical data for {stock_code}",
-                details=str(exc),
-            ) from exc
 
+        except Exception as exc:
+            logger.exception(
+                "Historical V2 request failed | stock=%s",
+                stock_code,
+            )
+            raise MarketDataException(
+                f"Historical V2 request failed for {stock_code}"
+            ) from exc
     # ------------------------------------------------------------------
     # WebSocket
     # ------------------------------------------------------------------
@@ -303,6 +311,37 @@ class BreezeClient:
                 details=str(exc),
             ) from exc
 
+    def subscribe_indices(self) -> dict[str, Any]:
+        self._ensure_websocket_connected()
+
+        responses = {}
+
+        responses["NIFTY"] = self.subscribe(
+            exchange_code="NSE",
+            stock_code="NIFTY",
+            product_type="cash",
+            get_exchange_quotes=True,
+            get_market_depth=False,
+        )
+
+        responses["BANKNIFTY"] = self.subscribe(
+            exchange_code="NSE",
+            stock_code="CNXBAN",
+            product_type="cash",
+            get_exchange_quotes=True,
+            get_market_depth=False,
+        )
+
+        responses["SENSEX"] = self.subscribe(
+            exchange_code="BSE",
+            stock_code="BSESEN",
+            product_type="cash",
+            get_exchange_quotes=True,
+            get_market_depth=False,
+        )
+
+        return responses
+
     # ------------------------------------------------------------------
     # Unsubscribe
     # ------------------------------------------------------------------
@@ -343,42 +382,6 @@ class BreezeClient:
                 message="Failed to disconnect from Breeze WebSocket",
                 details=str(exc),
             ) from exc
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _ensure_websocket_connected(self) -> None:
-        """Ensure WebSocket is connected."""
-
-        if not self._websocket_connected:
-            raise MarketDataException(
-                message="Breeze WebSocket is not connected")
-
-    @staticmethod
-    def _check_response(response: dict[str, Any]) -> None:
-        """Validate Breeze API response."""
-
-        if not isinstance(response, dict):
-            raise MarketDataException(
-                message="Invalid response received from Breeze",
-                details=response,
-            )
-
-        status = response.get("Status")
-        error = response.get("Error")
-
-        if status not in (None, 200):
-            raise MarketDataException(
-                message="Breeze API returned an error",
-                details=error or response,
-            )
-
-        if error:
-            raise MarketDataException(
-                message="Breeze API returned an error",
-                details=error,
-            )
 
     # ------------------------------------------------------------------
     # Internal helpers

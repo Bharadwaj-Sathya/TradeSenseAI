@@ -19,8 +19,10 @@ from app.core.logging import get_logger, setup_logging
 # Routes
 from app.features.routes.strategy import router as strategy_router
 from app.features.routes.settings import router as settings_router
-
-
+from app.features.routes.candle import router as candle_router
+from app.features.market_data.breeze_client import BreezeClient
+from app.features.market_data.index_feed import IndexFeedService
+from app.tasks.historical_sync import sync_historical_data
 # -------------------------------------------------
 # Load environment variables
 # -------------------------------------------------
@@ -40,27 +42,176 @@ logger = get_logger(__name__)
 # Lifespan
 # -------------------------------------------------
 
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Application startup begin")
 
+    # =========================================================
+    # Database
+    # =========================================================
+
     database_url = (settings.database_url or "").strip()
+
     if not database_url:
-        logger.warning("DATABASE_URL is not configured; skipping DB connectivity check")
+        logger.warning(
+            "DATABASE_URL is not configured; "
+            "skipping DB connectivity check"
+        )
     else:
         try:
             async with engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
+
             logger.info("Database connection verified")
+
         except Exception:
-            logger.exception("Database connection failed during startup")
+            logger.exception(
+                "Database connection failed during startup"
+            )
             raise
 
-    yield
+    # =========================================================
+    # Breeze
+    # =========================================================
 
-    logger.info("Application shutdown begin")
-    await engine.dispose()
-    logger.info("Database engine disposed")
+    breeze_client = None
+
+    try:
+        logger.info("Creating ICICI Breeze client")
+
+        breeze_client = BreezeClient()
+
+        logger.info("Connecting to ICICI Breeze REST API")
+
+        breeze_client.connect()
+
+        if not breeze_client.is_connected:
+            raise RuntimeError(
+                "Breeze REST connection could not be established"
+            )
+
+        logger.info("Breeze REST connection verified")
+
+        # Store Breeze client in FastAPI application state
+        app.state.breeze = breeze_client
+
+    except Exception:
+        logger.exception(
+            "Breeze REST connection failed during startup"
+        )
+        raise
+
+    # =========================================================
+    # Index Feed
+    # =========================================================
+
+    try:
+        logger.info("Initializing index feed service")
+
+        index_feed = IndexFeedService()
+
+        app.state.index_feed = index_feed
+
+        # -----------------------------------------------------
+        # Breeze WebSocket
+        # -----------------------------------------------------
+
+        logger.info("Connecting to Breeze WebSocket")
+
+        breeze_client.connect_websocket(
+            on_tick=index_feed.on_tick,
+        )
+
+        if not breeze_client.is_websocket_connected:
+            raise RuntimeError(
+                "Breeze WebSocket connection could not be established"
+            )
+
+        logger.info("Breeze WebSocket connected")
+
+    except Exception:
+        logger.exception(
+            "Breeze market-data WebSocket startup failed"
+        )
+
+        # If WebSocket connection partially succeeded,
+        # try to clean it up.
+        if breeze_client is not None:
+            try:
+                breeze_client.disconnect_websocket()
+            except Exception:
+                logger.exception(
+                    "Failed to cleanup Breeze WebSocket"
+                )
+
+        raise
+
+    # ----------------------------------------
+    # Subscribe NIFTY
+    # ----------------------------------------
+
+    response = breeze_client.subscribe_indices()
+
+    logger.info("INDEX subscription response: %s", response, )
+
+    try:
+
+        task = sync_historical_data.delay()
+
+        logger.info(
+            "Historical sync task queued | task_id=%s",
+            task.id,
+        )
+
+    except Exception:
+
+        logger.exception(
+            "Failed to queue historical sync task"
+        )
+
+    # =========================================================
+    # Application is ready
+    # =========================================================
+
+    logger.info("Application startup completed")
+
+    try:
+        yield
+
+    finally:
+        # =====================================================
+        # Shutdown
+        # =====================================================
+
+        logger.info("Application shutdown begin")
+
+        # -----------------------------------------------------
+        # Breeze WebSocket
+        # -----------------------------------------------------
+
+        if breeze_client is not None:
+            try:
+                breeze_client.disconnect_websocket()
+                logger.info("Breeze WebSocket disconnected")
+            except Exception:
+                logger.exception(
+                    "Failed to disconnect Breeze WebSocket"
+                )
+
+        # -----------------------------------------------------
+        # Database
+        # -----------------------------------------------------
+
+        try:
+            await engine.dispose()
+            logger.info("Database engine disposed")
+        except Exception:
+            logger.exception(
+                "Failed to dispose database engine"
+            )
+
+        logger.info("Application shutdown complete")
 
 
 # -------------------------------------------------
@@ -122,7 +273,8 @@ app.add_middleware(
 # -------------------------------------------------
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173",
+                   "http://localhost:8000", "http://127.0.0.1:8000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -157,7 +309,7 @@ def custom_openapi():
         terms_of_service=app.terms_of_service,
         contact=app.contact,
         license_info=app.license_info,
-        routes=app.routes,    )
+        routes=app.routes,)
 
     # Optional: API Logo in Swagger
     openapi_schema["info"]["x-logo"] = {
@@ -193,8 +345,6 @@ def health_check():
 
 
 app.include_router(api_router, prefix="/api/v1")
-app.include_router(strategy_router, prefix="/api/v1") 
+app.include_router(candle_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
-
-
-
+app.include_router(strategy_router, prefix="/api/v1")
