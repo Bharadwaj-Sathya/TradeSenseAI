@@ -20,9 +20,29 @@ interface MarketRow {
   fifteenMin: Signal;
 }
 
+interface BackendSignal {
+  timeframe: string;
+  direction: SignalType;
+  score: number;
+  price?: number;
+  timestamp?: string;
+}
+
+interface BackendMarketSignal {
+  type: "market_signal";
+  symbol: string;
+  timestamp: string;
+  signals: BackendSignal[];
+}
+
 // ============================================
 // SAMPLE DATA
 // ============================================
+
+const emptySignal = (): Signal => ({
+  signal: "NO_TRADE",
+  score: 0,
+});
 
 const initialMarketData: MarketRow[] = [
   {
@@ -117,6 +137,49 @@ function SignalCell({ data }: { data: Signal }) {
 }
 
 // ============================================
+// CONVERT BACKEND SIGNALS
+// ============================================
+
+function convertBackendSignal(
+  signals: BackendSignal[],
+  timeframe: string,
+): Signal {
+  const signal = signals.find((item) => item.timeframe === timeframe);
+
+  if (!signal) {
+    return emptySignal();
+  }
+
+  return {
+    signal: signal.direction,
+    score: signal.score,
+  };
+}
+
+// ============================================
+// UPDATE MARKET ROW
+// ============================================
+
+function updateMarketRow(
+  current: MarketRow | undefined,
+  backendData: BackendMarketSignal,
+): MarketRow {
+  const signals = backendData.signals;
+
+  return {
+    index: backendData.symbol,
+
+    oneMin: convertBackendSignal(signals, "1m"),
+
+    threeMin: convertBackendSignal(signals, "3m"),
+
+    fiveMin: convertBackendSignal(signals, "5m"),
+
+    fifteenMin: convertBackendSignal(signals, "15m"),
+  };
+}
+
+// ============================================
 // LIVE MARKET PAGE
 // ============================================
 
@@ -125,43 +188,109 @@ export default function LiveMarketPage() {
 
   const [loading, setLoading] = useState(false);
 
-  const [connected, setConnected] = useState(true);
+  const [connected, setConnected] = useState(false);
 
   // ============================================
   // WEBSOCKET
   // ============================================
 
   useEffect(() => {
-    /*
-      Replace this with your actual WebSocket.
+    const wsUrl =
+      window.location.protocol === "https:"
+        ? "wss://localhost:8000/api/v1/ws/market"
+        : "ws://localhost:8000/api/v1/ws/market";
 
-      const ws = new WebSocket(
-        "ws://localhost:8000/ws/live-market"
-      );
+    console.log("Connecting to market WebSocket:", wsUrl);
 
-      ws.onopen = () => {
-        setConnected(true);
-      };
+    const ws = new WebSocket(wsUrl);
 
-      ws.onmessage = (event) => {
+    ws.onopen = () => {
+      console.log("✅ Market WebSocket connected");
+
+      setConnected(true);
+      setLoading(false);
+    };
+
+    ws.onmessage = (event) => {
+      console.log("📩 Market WebSocket message:", event.data);
+
+      try {
         const data = JSON.parse(event.data);
-        setMarketData(data);
-      };
 
-      ws.onclose = () => {
-        setConnected(false);
-      };
+        if (data.type !== "market_signal") {
+          return;
+        }
 
-      ws.onerror = () => {
-        setConnected(false);
-      };
+        setMarketData((currentData) => {
+          const existingIndex = currentData.findIndex(
+            (item) =>
+              item.index === data.symbol ||
+              (data.symbol === "NIFTY" && item.index === "NIFTY 50") ||
+              (data.symbol === "BANKNIFTY" && item.index === "BANKNIFTY") ||
+              (data.symbol === "SENSEX" && item.index === "SENSEX"),
+          );
 
-      return () => {
-        ws.close();
-      };
-    */
+          const updatedRow = {
+            index: data.symbol === "NIFTY" ? "NIFTY 50" : data.symbol,
 
-    setConnected(true);
+            oneMin: data.signals.find((s: any) => s.timeframe === "1m") ?? {
+              signal: "NO_TRADE",
+              score: 0,
+            },
+
+            threeMin: data.signals.find((s: any) => s.timeframe === "3m") ?? {
+              signal: "NO_TRADE",
+              score: 0,
+            },
+
+            fiveMin: data.signals.find((s: any) => s.timeframe === "5m") ?? {
+              signal: "NO_TRADE",
+              score: 0,
+            },
+
+            fifteenMin: data.signals.find(
+              (s: any) => s.timeframe === "15m",
+            ) ?? {
+              signal: "NO_TRADE",
+              score: 0,
+            },
+          };
+
+          if (existingIndex === -1) {
+            return [...currentData, updatedRow];
+          }
+
+          const nextData = [...currentData];
+
+          nextData[existingIndex] = updatedRow;
+
+          return nextData;
+        });
+      } catch (error) {
+        console.error("❌ Failed to parse market WebSocket message:", error);
+      }
+    };
+
+    ws.onclose = (event) => {
+      console.log("❌ Market WebSocket disconnected", {
+        code: event.code,
+        reason: event.reason,
+      });
+
+      setConnected(false);
+    };
+
+    ws.onerror = (error) => {
+      console.error("❌ Market WebSocket error:", error);
+
+      setConnected(false);
+    };
+
+    return () => {
+      console.log("Closing market WebSocket");
+
+      ws.close();
+    };
   }, []);
 
   // ============================================

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
 from app.config.configuration import settings
-from app.config.database import engine
+from app.config.database import engine, AsyncSessionLocal, get_session_factory
 from app.core.logging import get_logger, setup_logging
 
 # Routes
@@ -23,6 +23,18 @@ from app.features.routes.candle import router as candle_router
 from app.features.market_data.breeze_client import BreezeClient
 from app.features.market_data.index_feed import IndexFeedService
 from app.tasks.historical_sync import sync_historical_data
+from app.features.routes.market_ws import router as market_ws_router
+
+from app.features.market_data.live_candle_engine import (
+    LiveCandleEngine,
+)
+from app.features.market_data.signal_engine import (
+    SignalEngine,
+)
+from app.websocket.market_manager import (
+    market_ws_manager,
+)
+
 # -------------------------------------------------
 # Load environment variables
 # -------------------------------------------------
@@ -63,7 +75,9 @@ async def lifespan(app: FastAPI):
             async with engine.begin() as conn:
                 await conn.execute(text("SELECT 1"))
 
-            logger.info("Database connection verified")
+            logger.info(
+                "Database connection verified"
+            )
 
         except Exception:
             logger.exception(
@@ -72,17 +86,66 @@ async def lifespan(app: FastAPI):
             raise
 
     # =========================================================
-    # Breeze
+    # Live Candle Engine
+    # =========================================================
+
+    live_candle_engine = None
+
+    try:
+        if AsyncSessionLocal is None:
+            raise RuntimeError(
+                "Database session factory is not configured"
+            )
+
+        logger.info(
+            "Initializing signal engine"
+        )
+
+        signal_engine = SignalEngine()
+
+        logger.info(
+            "Initializing live candle engine"
+        )
+
+        db_engine, session_factory = get_session_factory()
+
+        live_candle_engine = LiveCandleEngine(
+            session_factory=session_factory,
+            signal_engine=signal_engine,
+            broadcast=market_ws_manager.broadcast,
+        )
+
+        await live_candle_engine.start()
+
+        app.state.signal_engine = signal_engine
+        app.state.live_candle_engine = live_candle_engine
+
+        logger.info(
+            "Live candle engine started"
+        )
+
+    except Exception:
+        logger.exception(
+            "Live candle engine startup failed"
+        )
+        raise
+
+    # =========================================================
+    # Breeze REST
     # =========================================================
 
     breeze_client = None
 
     try:
-        logger.info("Creating ICICI Breeze client")
+        logger.info(
+            "Creating ICICI Breeze client"
+        )
 
         breeze_client = BreezeClient()
 
-        logger.info("Connecting to ICICI Breeze REST API")
+        logger.info(
+            "Connecting to ICICI Breeze REST API"
+        )
 
         breeze_client.connect()
 
@@ -91,7 +154,9 @@ async def lifespan(app: FastAPI):
                 "Breeze REST connection could not be established"
             )
 
-        logger.info("Breeze REST connection verified")
+        logger.info(
+            "Breeze REST connection verified"
+        )
 
         # Store Breeze client in FastAPI application state
         app.state.breeze = breeze_client
@@ -107,9 +172,23 @@ async def lifespan(app: FastAPI):
     # =========================================================
 
     try:
-        logger.info("Initializing index feed service")
+        logger.info(
+            "Initializing index feed service"
+        )
 
-        index_feed = IndexFeedService()
+        # Every Breeze tick will now flow:
+        #
+        # Breeze
+        #   ↓
+        # index_feed.on_tick()
+        #   ↓
+        # live_candle_engine.submit_tick()
+        #   ↓
+        # LiveCandleEngine queue
+        #
+        index_feed = IndexFeedService(
+            on_tick=live_candle_engine.submit_tick,
+        )
 
         app.state.index_feed = index_feed
 
@@ -117,7 +196,9 @@ async def lifespan(app: FastAPI):
         # Breeze WebSocket
         # -----------------------------------------------------
 
-        logger.info("Connecting to Breeze WebSocket")
+        logger.info(
+            "Connecting to Breeze WebSocket"
+        )
 
         breeze_client.connect_websocket(
             on_tick=index_feed.on_tick,
@@ -128,18 +209,20 @@ async def lifespan(app: FastAPI):
                 "Breeze WebSocket connection could not be established"
             )
 
-        logger.info("Breeze WebSocket connected")
+        logger.info(
+            "Breeze WebSocket connected"
+        )
 
     except Exception:
         logger.exception(
             "Breeze market-data WebSocket startup failed"
         )
 
-        # If WebSocket connection partially succeeded,
-        # try to clean it up.
+        # Cleanup WebSocket if connection partially succeeded
         if breeze_client is not None:
             try:
                 breeze_client.disconnect_websocket()
+
             except Exception:
                 logger.exception(
                     "Failed to cleanup Breeze WebSocket"
@@ -147,15 +230,36 @@ async def lifespan(app: FastAPI):
 
         raise
 
-    # ----------------------------------------
-    # Subscribe NIFTY
-    # ----------------------------------------
-
-    response = breeze_client.subscribe_indices()
-
-    logger.info("INDEX subscription response: %s", response, )
+    # =========================================================
+    # Subscribe to Indices
+    # =========================================================
 
     try:
+        logger.info(
+            "Subscribing to market indices"
+        )
+
+        response = breeze_client.subscribe_indices()
+
+        logger.info(
+            "INDEX subscription response: %s",
+            response,
+        )
+
+    except Exception:
+        logger.exception(
+            "Failed to subscribe to market indices"
+        )
+        raise
+
+    # =========================================================
+    # Historical Data Sync
+    # =========================================================
+
+    try:
+        logger.info(
+            "Queueing historical market-data synchronization"
+        )
 
         task = sync_historical_data.delay()
 
@@ -165,26 +269,46 @@ async def lifespan(app: FastAPI):
         )
 
     except Exception:
-
         logger.exception(
             "Failed to queue historical sync task"
         )
 
     # =========================================================
-    # Application is ready
+    # Application Ready
     # =========================================================
 
-    logger.info("Application startup completed")
+    logger.info(
+        "Application startup completed"
+    )
 
     try:
         yield
 
     finally:
         # =====================================================
-        # Shutdown
+        # Application Shutdown
         # =====================================================
 
-        logger.info("Application shutdown begin")
+        logger.info(
+            "Application shutdown begin"
+        )
+
+        # -----------------------------------------------------
+        # Live Candle Engine
+        # -----------------------------------------------------
+
+        if live_candle_engine is not None:
+            try:
+                await live_candle_engine.stop()
+
+                logger.info(
+                    "Live candle engine stopped"
+                )
+
+            except Exception:
+                logger.exception(
+                    "Failed to stop live candle engine"
+                )
 
         # -----------------------------------------------------
         # Breeze WebSocket
@@ -193,7 +317,11 @@ async def lifespan(app: FastAPI):
         if breeze_client is not None:
             try:
                 breeze_client.disconnect_websocket()
-                logger.info("Breeze WebSocket disconnected")
+
+                logger.info(
+                    "Breeze WebSocket disconnected"
+                )
+
             except Exception:
                 logger.exception(
                     "Failed to disconnect Breeze WebSocket"
@@ -205,14 +333,19 @@ async def lifespan(app: FastAPI):
 
         try:
             await engine.dispose()
-            logger.info("Database engine disposed")
+
+            logger.info(
+                "Database engine disposed"
+            )
+
         except Exception:
             logger.exception(
                 "Failed to dispose database engine"
             )
 
-        logger.info("Application shutdown complete")
-
+        logger.info(
+            "Application shutdown complete"
+        )
 
 # -------------------------------------------------
 # FastAPI App Configuration
@@ -348,3 +481,4 @@ app.include_router(api_router, prefix="/api/v1")
 app.include_router(candle_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
 app.include_router(strategy_router, prefix="/api/v1")
+app.include_router(market_ws_router, prefix="/api/v1")
